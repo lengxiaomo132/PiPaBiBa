@@ -1,0 +1,217 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0b0f14;
+  color: #e8eef6;
+  font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: none;
+}
+
+canvas { display: block; }
+
+#hud {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 16px;
+  background: rgba(10, 16, 24, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  min-width: 130px;
+}
+
+#hud .row {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+#hud .label { opacity: 0.6; }
+
+#hint {
+  position: fixed;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 13px;
+  opacity: 0.5;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+  background: rgba(6, 10, 16, 0.72);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+  transition: opacity 0.25s ease;
+}
+
+#overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#overlay h1 {
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+#overlay p { font-size: 16px; opacity: 0.8; }
+#overlay p.small { font-size: 14px; opacity: 0.5; margin-top: 8px; }
+
+#loading {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  background: #0b0f14;
+  font-size: 15px;
+  opacity: 0.9;
+  transition: opacity 0.3s ease;
+}
+
+#loading #loading-detail {
+  font-size: 13px;
+  opacity: 0.55;
+  min-height: 1.2em;
+}
+
+#loading.error {
+  opacity: 1;
+  background: #120d10;
+  justify-content: center;
+}
+
+#loading.error {
+  overflow: auto;
+}
+
+#loading.error h1 {
+  font-size: 26px;
+  color: #ff8a8a;
+  margin-bottom: 6px;
+}
+
+#loading.error p {
+  font-size: 14px;
+  line-height: 1.6;
+  opacity: 0.85;
+  max-width: 640px;
+}
+
+#loading.error code {
+  font-family: Consolas, "Courier New", monospace;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+#loading.hidden {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition: opacity 0.3s ease, visibility 0s linear 0.3s;
+}
+
+#joystick,
+#btn-jump {
+  display: none;
+}
+
+body.is-touch #joystick {
+  display: block;
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 120px;
+  height: 120px;
+  margin-left: -60px;
+  margin-top: -60px;
+  border-radius: 50%;
+  border: 2px solid rgba(140, 220, 255, 0.5);
+  background: rgba(80, 160, 220, 0.15);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+  z-index: 10;
+}
+
+body.is-touch #joystick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 52px;
+  height: 52px;
+  margin: 0;
+  border-radius: 50%;
+  background: rgba(150, 230, 255, 0.55);
+  border: 2px solid rgba(200, 245, 255, 0.8);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+body.is-touch #btn-jump {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: fixed;
+  right: 26px;
+  bottom: 40px;
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  border: 2px solid rgba(140, 220, 255, 0.6);
+  background: rgba(80, 160, 220, 0.25);
+  color: #cfeeff;
+  font-size: 26px;
+  font-weight: 700;
+  font-family: inherit;
+  letter-spacing: 2px;
+  z-index: 10;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  transition: transform 0.08s ease, background 0.08s ease;
+}
+
+body.is-touch #btn-jump.pressed {
+  background: rgba(120, 210, 255, 0.55);
+  transform: scale(0.92);
+}
+
+body.is-touch #hint {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  #hud {
+    font-size: 17px;
+    padding: 8px 12px;
+  }
+}

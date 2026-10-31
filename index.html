@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>PiPaBiBa</title>
+  <link rel="stylesheet" href="./style.css" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three/build/three.module.js",
+      "three/addons/": "./vendor/three/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="hud">
+    <div class="row"><span class="label">Score</span><span id="score">0</span></div>
+    <div class="row"><span class="label">Time</span><span id="time">20.0</span></div>
+    <div class="row" id="combo-row" style="display:none"><span class="label">Combo</span><span id="combo">x1</span></div>
+  </div>
+
+  <div id="hint">WASD / Arrows to move &middot; Drag to rotate view &middot; Space to jump &middot; F for debug</div>
+
+  <div id="joystick"><div id="joystick-knob"></div></div>
+  <button id="btn-jump" type="button" aria-label="Jump">JUMP</button>
+
+  <div id="overlay">
+    <h1>PiPaBiBa</h1>
+    <p>Eat as many cubes as you can in 20 seconds.</p>
+    <p class="small">Click to start</p>
+  </div>
+
+  <div id="loading">
+    <p>Loading&hellip;</p>
+    <p id="loading-detail" class="small"></p>
+  </div>
+
+  <script>
+  (function () {
+    'use strict';
+    var loading = document.getElementById('loading');
+    if (!loading) return;
+
+    var reported = false;
+    var renderErrors = [];
+
+    function booted() {
+      return loading.classList.contains('hidden');
+    }
+
+    function showError(title, lines) {
+      if (reported || booted()) return;
+      reported = true;
+      loading.classList.remove('hidden');
+      loading.classList.add('error');
+      loading.innerHTML = '<h1>' + title + '</h1>' +
+        lines.map(function (l) { return '<p>' + l + '</p>'; }).join('');
+    }
+
+    if (location.protocol === 'file:') {
+      showError('Please use a local server', [
+        'Browsers block ES modules on file:// so main.js will not run.',
+        'Use a local server, or download the single-file build.',
+      ]);
+      return;
+    }
+
+    window.addEventListener('error', function (ev) {
+      var msg = (ev && ev.message) ? ev.message : 'Unknown error (three.js may have failed to load)';
+      var where = (ev && ev.filename) ? (ev.filename.split('/').pop() + ':' + ev.lineno) : '';
+      renderErrors.push({ msg: msg, where: where, count: renderErrors.length });
+      if (booted()) return;
+      showError('Startup error', [
+        '<code>' + String(msg).replace(/[<>]/g, '') + '</code>',
+        'Press F12 for the full stack trace.',
+      ]);
+    });
+    window.addEventListener('unhandledrejection', function (ev) {
+      var r = ev && ev.reason;
+      var msg = (r && (r.message || r)) || 'Unhandled promise rejection';
+      renderErrors.push({ msg: msg, where: '', count: renderErrors.length });
+      if (booted()) return;
+      showError('Startup error', ['<code>' + String(msg).replace(/[<>]/g, '') + '</code>']);
+    });
+
+    try {
+      var canvas = document.createElement('canvas');
+      var gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+      if (!gl) {
+        showError('WebGL not available', [
+          'Enable hardware acceleration in your browser settings, then restart it.',
+        ]);
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    var origConsoleError = console.error;
+    console.error = function () {
+      var text = Array.prototype.map.call(arguments, function (a) {
+        return typeof a === 'string' ? a : String(a);
+      }).join(' ');
+      if (/shader|GLSL/i.test(text) && /error/i.test(text)) {
+        renderErrors.push({ msg: 'Shader compile error: ' + text.slice(0, 240), where: '' });
+        if (!booted()) {
+          showError('Shader compile failed', [
+            '<code>' + text.slice(0, 300).replace(/[<>]/g, '') + '</code>',
+            'Press F12 for the full GLSL error.',
+          ]);
+        }
+      }
+      origConsoleError.apply(console, arguments);
+    };
+
+    var lastCount = 0;
+    var stuckTicks = 0;
+    var watch = setInterval(function () {
+      if (!booted()) { stuckTicks = 0; return; }
+      if (renderErrors.length > lastCount) {
+        lastCount = renderErrors.length;
+        stuckTicks++;
+      } else {
+        stuckTicks = 0;
+      }
+      if (stuckTicks >= 30) {
+        clearInterval(watch);
+        var first = renderErrors[0];
+        loading.classList.remove('hidden');
+        loading.classList.add('error');
+        loading.innerHTML =
+          '<h1>Render loop keeps failing</h1>' +
+          '<p><code>' + String(first.msg).replace(/[<>]/g, '') + '</code></p>' +
+          (first.where ? '<p>at <code>' + first.where + '</code></p>' : '') +
+          '<p>' + renderErrors.length + ' errors. Press F12 and check the first red line.</p>';
+      }
+    }, 100);
+
+    setTimeout(function () {
+      if (booted() || reported) return;
+      showError('Loading timed out', [
+        '15 seconds elapsed without starting.',
+        'Press F12 and check the Network tab for failed requests.',
+      ]);
+    }, 15000);
+  })();
+  </script>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
