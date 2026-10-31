@@ -1979,31 +1979,12 @@ function endRound() {
     comboLine,
     `Best ${state.best}`,
   ].filter(Boolean));
-  // 回到结算遮罩后，竖屏提示可以重新出现（函数声明会提升，这里调用没问题）
-  updateRotateHint();
 }
 
 // ---------------- 横屏适配 ----------------
-// 目标：手机上尽量横屏玩。
-//   1. 点开始时尝试 全屏 + screen.orientation.lock('landscape')
-//      —— 成功的话手机直接转横屏且无状态栏；失败（iOS Safari 不支持）就忽略，不影响游戏
-//   2. 竖屏时显示半透明提示层，但【不完全挡住】游戏，玩家仍可继续玩
-const rotateHint = document.getElementById('rotate-hint');
-
-function isPortrait() {
-  return window.innerHeight > window.innerWidth;
-}
-
-function updateRotateHint() {
-  if (!rotateHint) return;
-  // 只在"还没开始游戏"时提示：
-  // 开局后再弹出会遮挡画面、干扰操作，而且玩家已经看到游戏了，提示也没必要。
-  // 想重新看提示就等这一局结束（回到结算遮罩时 running=false）。
-  const show = isTouch && isPortrait() && !state.running;
-  rotateHint.style.display = show ? 'flex' : 'none';
-}
-
-// 尝试锁定横屏。必须在用户手势（点击）里调用，否则浏览器会拒绝。
+// 点开始时尝试 全屏 + screen.orientation.lock('landscape')。
+// 成功的话手机直接转横屏且无状态栏；失败（iOS Safari 不支持方向锁）就静默忽略。
+// 这里【不做】任何竖屏提示覆盖层：玩家想怎么拿手机就怎么拿，不打扰。
 async function tryLockLandscape() {
   if (!isTouch) return;
   try {
@@ -2016,25 +1997,15 @@ async function tryLockLandscape() {
       await screen.orientation.lock('landscape');
     }
   } catch (e) {
-    // 不支持或被拒绝：完全忽略，靠竖屏提示兜底
+    // 不支持或被拒绝：完全忽略，不影响游戏
   }
 }
-
-addEventListener('orientationchange', () => {
-  // 方向变化后布局尺寸要过一小会儿才更新，延迟再算
-  setTimeout(updateRotateHint, 120);
-});
-addEventListener('resize', updateRotateHint);
-updateRotateHint();
 
 ui.overlay.addEventListener('click', () => {
   initAudio();
   // 先尝试横屏（必须在这个用户手势的调用栈里）
   tryLockLandscape();
   if (!state.running) startRound();
-  // 开局后立刻收起"转横屏"提示（之后只有 resize/orientationchange 才会重新判断，
-  // 而那时 state.running 为 true，不会再显示）
-  updateRotateHint();
 });
 // 触屏设备上，摇杆第一次按下也补一次尝试（万一玩家跳过了开始遮罩）
 if (joystickEl) {
