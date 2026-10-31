@@ -114,6 +114,13 @@ const JUICE = {
   squashTintMin: 0.35,    // 压到最扁时的亮度系数下限（1 = 不变）
   // C2 内核跟随挤压：身体被压扁时，内核也变成椭球
   coreSquashFollow: 0.65, // 内核跟随身体形变的比例（0 = 永远正圆，1 = 完全跟随）
+
+  // ---- 平滑跟随速率（1/s，越大跟得越快）----
+  // 这些原本是散落在代码里的硬编码数字，收进配置方便统一调手感。
+  squashTintRate: 10,      // 压缩变色的跟随速度
+  coreSquashRate: 14,      // 内核形变的跟随速度
+  turnRate: 15,            // 转身速度（脸转向移动方向）
+  cameraFollowRate: 8,     // 相机 target 跟随玩家的速度
 };
 
 // ---------------- 灯光参数（阶段 3：三点光 + 接触阴影 + 方块光晕） ----------------
@@ -230,46 +237,58 @@ scene.add(hemi);
 // ---------------- 场景内容 ----------------
 // 地面纹理：用 canvas 程序化画一张砖块/棋盘格，不引入任何图片资源。
 // 为什么不用纯色：纯色地面在等距视角下看不出远近和移动速度，加纹理能明显提升"立体感"。
-function makeGroundTexture() {
-  const size = 512;
+// ---------------- 程序化贴图工具 ----------------
+// 项目里所有贴图都是 canvas 现画的（不加载图片资源）。
+// 三个绘制函数共用这套"建 canvas → 交给 draw 回调 → 包成 Texture"的流程，
+// 这里统一封装，省掉每个函数里重复的 6 行样板。
+function makeCanvasTexture(size, draw, opts) {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d');
-
-  // 底色
-  ctx.fillStyle = '#223141';
-  ctx.fillRect(0, 0, size, size);
-
-  // 2x2 的暗色块，形成棋盘感（同色相邻会显得单调）
-  const half = size / 2;
-  ctx.fillStyle = '#26374a';
-  ctx.fillRect(0, 0, half, half);
-  ctx.fillRect(half, half, half, half);
-
-  // 砖缝：细线，让地面有"板"的感觉
-  ctx.strokeStyle = 'rgba(90, 130, 170, 0.22)';
-  ctx.lineWidth = 2;
-  for (let i = 0; i <= 4; i++) {
-    const p = (i / 4) * size;
-    ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, size); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(size, p); ctx.stroke();
-  }
-
-  // 一点噪点，避免大色块看起来太"平"
-  for (let i = 0; i < 900; i++) {
-    const x = Math.random() * size;
-    const y = Math.random() * size;
-    const a = Math.random() * 0.05;
-    ctx.fillStyle = `rgba(150, 200, 255, ${a})`;
-    ctx.fillRect(x, y, 2, 2);
-  }
+  draw(ctx, size);
 
   const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(CONFIG.levelSize / 5, CONFIG.levelSize / 5); // 每 5 个世界单位重复一次
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
+  if (opts) {
+    if (opts.repeat) {
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(opts.repeat, opts.repeat);
+    }
+    if (opts.anisotropy) tex.anisotropy = opts.anisotropy;
+  }
   return tex;
+}
+
+function makeGroundTexture() {
+  return makeCanvasTexture(512, (ctx, size) => {
+    // 底色
+    ctx.fillStyle = '#223141';
+    ctx.fillRect(0, 0, size, size);
+
+    // 2x2 的暗色块，形成棋盘感（同色相邻会显得单调）
+    const half = size / 2;
+    ctx.fillStyle = '#26374a';
+    ctx.fillRect(0, 0, half, half);
+    ctx.fillRect(half, half, half, half);
+
+    // 砖缝：细线，让地面有"板"的感觉
+    ctx.strokeStyle = 'rgba(90, 130, 170, 0.22)';
+    ctx.lineWidth = 2;
+    for (let i = 0; i <= 4; i++) {
+      const p = (i / 4) * size;
+      ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, size); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(size, p); ctx.stroke();
+    }
+
+    // 一点噪点，避免大色块看起来太"平"
+    for (let i = 0; i < 900; i++) {
+      const x = Math.random() * size;
+      const y = Math.random() * size;
+      const a = Math.random() * 0.05;
+      ctx.fillStyle = `rgba(150, 200, 255, ${a})`;
+      ctx.fillRect(x, y, 2, 2);
+    }
+  }, { repeat: CONFIG.levelSize / 5, anisotropy: 4 });   // 每 5 个世界单位重复一次
 }
 
 const ground = new THREE.Mesh(
@@ -656,20 +675,15 @@ const _heatOutline = new THREE.Color();
 // 加法混合 → 像"多出来的光"而不是贴纸；始终挂在场景里、跟随玩家水平位置。
 // 不用任何自定义 shader 或渲染目标，所以不会出现"代码对但看不见"的问题。
 function makeRadialTexture() {
-  const size = 128;
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  grad.addColorStop(0.0, 'rgba(255,255,255,1)');
-  grad.addColorStop(0.35, 'rgba(255,255,255,0.65)');
-  grad.addColorStop(0.7, 'rgba(255,255,255,0.2)');
-  grad.addColorStop(1.0, 'rgba(255,255,255,0)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, size, size);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+  return makeCanvasTexture(128, (ctx, size) => {
+    const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grad.addColorStop(0.0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.35, 'rgba(255,255,255,0.65)');
+    grad.addColorStop(0.7, 'rgba(255,255,255,0.2)');
+    grad.addColorStop(1.0, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+  });
 }
 
 const castLightMat = new THREE.MeshBasicMaterial({
@@ -703,31 +717,26 @@ const eyeMat = new THREE.MeshStandardMaterial({
 // 做法：在眼睛前面盖一层"星形贴图"的平面，吃到时淡入、之后淡出。
 // 不用替换眼睛几何体（那要重建 mesh），只用透明度切换，最稳也不会掉帧。
 function makeStarTexture() {
-  const size = 128;
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, size, size);
-  // 五角星
-  const cx = size / 2, cy = size / 2;
-  const outer = size * 0.46, inner = outer * 0.42;
-  ctx.beginPath();
-  for (let i = 0; i < 10; i++) {
-    const r = i % 2 === 0 ? outer : inner;
-    const a = (Math.PI / 5) * i - Math.PI / 2;
-    const x = cx + Math.cos(a) * r;
-    const y = cy + Math.sin(a) * r;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.closePath();
-  ctx.fillStyle = '#fff6b8';
-  ctx.fill();
-  ctx.strokeStyle = '#ffd23f';
-  ctx.lineWidth = 4;
-  ctx.stroke();
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+  return makeCanvasTexture(128, (ctx, size) => {
+    ctx.clearRect(0, 0, size, size);
+    // 五角星：10 个顶点交替取外半径/内半径
+    const cx = size / 2, cy = size / 2;
+    const outer = size * 0.46, inner = outer * 0.42;
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 === 0 ? outer : inner;
+      const a = (Math.PI / 5) * i - Math.PI / 2;
+      const x = cx + Math.cos(a) * r;
+      const y = cy + Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = '#fff6b8';
+    ctx.fill();
+    ctx.strokeStyle = '#ffd23f';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+  });
 }
 
 const starTex = makeStarTexture();
@@ -999,7 +1008,7 @@ function updateHeatColor(dt) {
   const eaten = Math.floor(state.score / 10);
   const target = THREE.MathUtils.clamp(eaten / SLIME.heatCount, 0, 1);
   // 平滑跟随，避免吃到瞬间跳色
-  heat += (target - heat) * (1 - Math.exp(-SLIME.heatLerpRate * dt));
+  heat += (target - heat) * smooth(SLIME.heatLerpRate, dt);
 
   // 色相：绿 -> 红（走短路径，140 -> 0 直接下降即可）
   const h = THREE.MathUtils.lerp(SLIME.heatHueGreen, SLIME.heatHueRed, heat);
@@ -1094,7 +1103,7 @@ function updateSquash(dt, speed01, isForward) {
   const sy = THREE.MathUtils.clamp(squash.scale, 0.35, 1.8);
 
   // 视觉层的滞后：身体比弹簧慢一点点跟上，产生"软"的感觉
-  const lagT = 1 - Math.exp(-SLIME.lagRate * dt);
+  const lagT = smooth(SLIME.lagRate, dt);
   slimeShape.syLag += (sy - slimeShape.syLag) * lagT;
 
   // ---- 前倾拉伸 ----
@@ -1102,7 +1111,7 @@ function updateSquash(dt, speed01, isForward) {
   const leanTarget = isForward
     ? SLIME.leanMax * speed01
     : -SLIME.backLean * speed01;
-  const leanT = 1 - Math.exp(-SLIME.leanLag * dt);
+  const leanT = smooth(SLIME.leanLag, dt);
   slimeShape.lean += (leanTarget - slimeShape.lean) * leanT;
 
   const stretchTarget = SLIME.stretchMax * speed01;
@@ -1155,7 +1164,7 @@ function updateSquash(dt, speed01, isForward) {
   // sy=1 时保持原色，偏离越大变化越明显。
   const squash01 = THREE.MathUtils.clamp(Math.abs(syFinal - 1) * 2, 0, 1);
   const tintTarget = 1 - squash01 * JUICE.squashTintAmount;
-  squashTint += (tintTarget - squashTint) * (1 - Math.exp(-10 * dt));
+  squashTint += (tintTarget - squashTint) * smooth(JUICE.squashTintRate, dt);
   slimeMat.emissiveIntensity = SLIME.emissiveIntensity * (1 + squash01 * JUICE.squashTintAmount * 1.6);
   slimeMat.opacity = THREE.MathUtils.clamp(
     SLIME.opacity * (0.85 + squashTint * 0.15), 0.3, 1
@@ -1166,7 +1175,7 @@ function updateSquash(dt, speed01, isForward) {
   // 只跟随一部分（coreSquashFollow），否则内核会像被压扁的橡皮泥一样失去"里子"感。
   const followY = THREE.MathUtils.lerp(1, syFinal, JUICE.coreSquashFollow);
   const followXZ = 1 / Math.sqrt(Math.max(followY, 0.3));
-  const cs = 1 - Math.exp(-14 * dt);
+  const cs = smooth(JUICE.coreSquashRate, dt);
   coreSquash.y += (followY - coreSquash.y) * cs;
   coreSquash.x += (followXZ - coreSquash.x) * cs;
   coreSquash.z += (followXZ - coreSquash.z) * cs;
@@ -1401,6 +1410,12 @@ let debugOn = true;
 const upAxis = new THREE.Vector3(0, 1, 0); // 复用，避免每帧 new
 const tmpOffset = new THREE.Vector3();     // 捏合缩放用的临时向量
 
+// 与帧率无关的平滑系数：rate 越大跟得越快。
+// 全项目有 8 处用 `1 - Math.exp(-rate * dt)`，统一成一个函数避免写错符号。
+function smooth(rate, dt) {
+  return 1 - Math.exp(-rate * dt);
+}
+
 addEventListener('keydown', (e) => {
   initAudio();   // 浏览器要求用户交互后才能出声，第一次按键时创建 AudioContext
   const k = keyMap[e.code];
@@ -1527,6 +1542,9 @@ canvasEl.addEventListener('touchstart', (e) => {
   if (e.touches.length === 2) {
     pinch.active = true;
     pinch.lastDist = touchDist(e.touches[0], e.touches[1]);
+    // 捏合期间关掉 OrbitControls，双保险：
+    // 即使它的指针状态管理有遗漏，也不可能在缩放时转动视角。
+    controls.enabled = false;
     e.preventDefault();
   }
 }, { passive: false });
@@ -1548,7 +1566,11 @@ canvasEl.addEventListener('touchmove', (e) => {
 }, { passive: false });
 
 canvasEl.addEventListener('touchend', (e) => {
-  if (e.touches.length < 2) pinch.active = false;
+  if (e.touches.length < 2 && pinch.active) {
+    pinch.active = false;
+    // 手指抬到只剩一根（或零根）时恢复相机控制
+    controls.enabled = true;
+  }
 }, { passive: true });
 
 
@@ -1658,10 +1680,12 @@ function getMoveDirection() {
   return tmpDir;
 }
 
-function update(dt) {
-  if (!state.running) return;
+// ---------------- 每帧更新 ----------------
+// 拆成职责单一的小函数，update() 只负责按顺序调度。
+// 这样每个子系统（计时/移动/跳跃/碰撞/拾取/视觉）都能单独读懂、单独改。
 
-  // ---- 计时 ----
+// 计时 + 最后一秒的滴答声
+function updateTimer(dt) {
   state.timeLeft = Math.max(0, state.timeLeft - dt);
   updateCombo(dt);   // 连击计时：超时断连
 
@@ -1673,16 +1697,19 @@ function update(dt) {
   }
 
   if (state.timeLeft <= 0) endRound();
+}
 
-  // ---- 水平移动：指数趋近目标速度，起步有推力、松键有惯性 ----
-  const dir = getMoveDirection();
+// 水平移动：指数趋近目标速度，起步有推力、松键有惯性
+function updateHorizontalMove(dt, dir) {
   const targetVX = dir.x * CONFIG.moveSpeed;
   const targetVZ = dir.z * CONFIG.moveSpeed;
-  const approach = 1 - Math.exp(-JUICE.accelRate * dt); // 与帧率无关的平滑系数
+  const approach = smooth(JUICE.accelRate, dt);
   velocity.x += (targetVX - velocity.x) * approach;
   velocity.z += (targetVZ - velocity.z) * approach;
+}
 
-  // 前倾拉伸用到的两个量：速度占全速的比例、是不是在朝"脸"的方向走
+// 前进/后退判定：给"前倾拉伸"用
+function computeSpeedRatio() {
   const speed01 = THREE.MathUtils.clamp(
     Math.hypot(velocity.x, velocity.z) / CONFIG.moveSpeed, 0, 1
   );
@@ -1694,16 +1721,17 @@ function update(dt) {
     const dot = (velocity.x * faceX + velocity.z * faceZ) / Math.hypot(velocity.x, velocity.z);
     isForward = dot >= 0;
   }
+  return { speed01, isForward };
+}
 
-  // ---- 跳跃 + 重力 ----
-  // B2 起跳预压：按下跳跃先蹲一下，蹲到底才真正起跳。
-  // 这个"蓄力"让跳起来更有劲，是平台跳跃游戏的标准做法。
-  // 状态：armed=true 表示"可以开始新的一次预压"（松手后重新武装）。
+// 跳跃 + 重力。
+// B2 起跳预压：按下跳跃先蹲一下，蹲到底才真正起跳（蓄力感）。
+// crouch.armed=true 表示"可以开始新的一次预压"（松手后重新武装）。
+function updateJumpAndGravity(dt) {
   const jumpDown = keys.has('jump') && onGround;
   if (jumpDown) {
     if (crouch.armed) {
-      // 刚按下：进入下蹲
-      crouch.armed = false;
+      crouch.armed = false;             // 刚按下：进入下蹲
       crouch.timer = JUICE.jumpCrouchTime;
     }
     crouch.timer -= dt;
@@ -1730,13 +1758,12 @@ function update(dt) {
   }
 
   velocity.y += CONFIG.gravity * dt;
+}
 
-  const wasGrounded = onGround;
-
-  // ---- 积分 ----
+// 积分 + 地面碰撞 + 场地边界
+function updateCollision(dt, wasGrounded) {
   player.position.addScaledVector(velocity, dt);
 
-  // ---- 地面碰撞 ----
   if (player.position.y <= PLAYER_GROUND_Y) {
     const impact = Math.abs(velocity.y); // 落地瞬间的向下速度
     player.position.y = PLAYER_GROUND_Y;
@@ -1751,31 +1778,45 @@ function update(dt) {
     }
   }
 
-  // ---- 边界 ----
   const lim = CONFIG.levelSize * 0.5 - 1;
   player.position.x = THREE.MathUtils.clamp(player.position.x, -lim, lim);
   player.position.z = THREE.MathUtils.clamp(player.position.z, -lim, lim);
+}
 
-  // ---- 透光地面光斑：跟随玩家，保持圆形 ----
-  castLight.position.x = player.position.x;
-  castLight.position.z = player.position.z;
-  // 跳得越高越散越淡
-  const jumpH = Math.max(0, player.position.y - PLAYER_GROUND_Y);
-  const castSpread = 1 + jumpH * 0.4;
-  const castFade = THREE.MathUtils.clamp(1 - jumpH * 0.5, 0.2, 1);
-  castLightMat.opacity = SLIME.castOpacity * castFade;
-  castLight.scale.set(castSpread, castSpread, 1);
-
-  // ---- 朝向：让脸指向移动方向 ----
-  if (dir.lengthSq() > 0.001) {
-    const targetAngle = Math.atan2(dir.x, dir.z); // 注意：模型朝向 -Z
-    player.rotation.y = lerpAngle(player.rotation.y, targetAngle + Math.PI, 1 - Math.exp(-15 * dt));
+// 吃掉一个方块的全部结算：分数、连击、音效、粒子、各种视觉反馈
+function onPickupEaten(m, dx, dz, len) {
+  m.userData.alive = false;
+  m.userData.popT = 0;
+  // 炸开方向：从玩家指向方块的水平方向（远离玩家），这样永远不会盖住主角
+  if (len > 0.0001) {
+    m.userData.popDirX = dx / len;
+    m.userData.popDirZ = dz / len;
+  } else {
+    m.userData.popDirX = 0;
+    m.userData.popDirZ = 1;
   }
+  m.userData.popY0 = m.position.y;
+  m.userData.popX0 = m.position.x;
+  m.userData.popZ0 = m.position.z;
 
-  // ---- 把这一帧的运动状态交给视觉层（前倾拉伸用）----
-  updateSquash(dt, speed01, isForward);
+  registerComboHit();
+  const mult = getComboMultiplier();
+  state.score += 10 * mult;
+  ui.score.textContent = state.score;
+  updateComboHud();
+  // 音高随倍率升高，连击越猛声音越亮
+  playSound('eat', 1 + (mult - 1) * 0.12);
+  spawnParticles(m.position.x, m.position.y, m.position.z, PARTICLE.perBurst);
+  squashImpulse(JUICE.eatPulse); // 吃到时自己也弹一下
+  corePulse = 1;                 // 内核亮一下
+  starEyes = 1;                  // 眼睛变星星
+  // 内核被"吸"向方块：给滞后弹簧一个朝方块的初始速度
+  coreLag.velX = (dx / (len || 1)) * 1.2;
+  coreLag.velZ = (dz / (len || 1)) * 1.2;
+}
 
-  // ---- 收集物：浮动 + 碰撞 + 爆开动画 ----
+// 收集物：浮动 + 碰撞 + 爆开动画
+function updatePickups(dt) {
   const t = clock.elapsedTime;
   for (const m of pickups) {
     if (m.userData.alive) {
@@ -1788,38 +1829,7 @@ function update(dt) {
       const dy = m.position.y - player.position.y;
       const r = CONFIG.playerRadius + 0.5;
       if (dx * dx + dz * dz < r * r && Math.abs(dy) < 1.2) {
-        // 不立刻消失：转入爆开动画，播完才真正隐藏
-        m.userData.alive = false;
-        m.userData.popT = 0;
-        // 炸开方向：从玩家指向方块的水平方向（远离玩家），这样永远不会盖住主角
-        const len = Math.hypot(dx, dz);
-        if (len > 0.0001) {
-          m.userData.popDirX = dx / len;
-          m.userData.popDirZ = dz / len;
-        } else {
-          m.userData.popDirX = 0;
-          m.userData.popDirZ = 1;
-        }
-        m.userData.popY0 = m.position.y;
-        m.userData.popX0 = m.position.x;
-        m.userData.popZ0 = m.position.z;
-
-        // ---- 连击结算 ----
-        registerComboHit();
-        const mult = getComboMultiplier();
-        const gained = 10 * mult;
-        state.score += gained;
-        ui.score.textContent = state.score;
-        updateComboHud();
-        // 音高随倍率升高，连击越猛声音越亮
-        playSound('eat', 1 + (mult - 1) * 0.12);
-        spawnParticles(m.position.x, m.position.y, m.position.z, PARTICLE.perBurst);
-        squashImpulse(JUICE.eatPulse); // 吃到时自己也弹一下
-        corePulse = 1;                 // 内核亮一下
-        starEyes = 1;                  // 眼睛变星星
-        // 内核被"吸"向方块：给滞后弹簧一个朝方块的初始速度
-        coreLag.velX = (dx / (len || 1)) * 1.2;
-        coreLag.velZ = (dz / (len || 1)) * 1.2;
+        onPickupEaten(m, dx, dz, Math.hypot(dx, dz));
       }
       continue;
     }
@@ -1845,8 +1855,48 @@ function update(dt) {
     }
   }
 
-  // ---- 全吃光就重新铺一局（要等爆开动画播完，不能打断）----
+  // 全吃光就重新铺一局（要等爆开动画播完，不能打断）
   if (pickups.every((m) => !m.userData.alive && m.userData.popT === null)) spawnPickups();
+}
+
+// 视觉层：地面光斑、朝向、身体形变
+function updateVisuals(dt, dir, speed01, isForward) {
+  // 透光地面光斑：跟随玩家，保持圆形
+  castLight.position.x = player.position.x;
+  castLight.position.z = player.position.z;
+  // 跳得越高越散越淡
+  const jumpH = Math.max(0, player.position.y - PLAYER_GROUND_Y);
+  const castSpread = 1 + jumpH * 0.4;
+  const castFade = THREE.MathUtils.clamp(1 - jumpH * 0.5, 0.2, 1);
+  castLightMat.opacity = SLIME.castOpacity * castFade;
+  castLight.scale.set(castSpread, castSpread, 1);
+
+  // 朝向：让脸指向移动方向
+  if (dir.lengthSq() > 0.001) {
+    const targetAngle = Math.atan2(dir.x, dir.z); // 注意：模型朝向 -Z
+    player.rotation.y = lerpAngle(player.rotation.y, targetAngle + Math.PI, smooth(JUICE.turnRate, dt));
+  }
+
+  // 把这一帧的运动状态交给视觉层（前倾拉伸用）
+  updateSquash(dt, speed01, isForward);
+}
+
+function update(dt) {
+  if (!state.running) return;
+
+  updateTimer(dt);
+
+  const dir = getMoveDirection();
+  updateHorizontalMove(dt, dir);
+  const { speed01, isForward } = computeSpeedRatio();
+
+  updateJumpAndGravity(dt);
+
+  const wasGrounded = onGround;
+  updateCollision(dt, wasGrounded);
+
+  updateVisuals(dt, dir, speed01, isForward);
+  updatePickups(dt);
 }
 
 // 角度插值（处理 -π/π 跨越）
@@ -1984,7 +2034,7 @@ function animate() {
   outlineUniforms.uResolutionY.value = window.innerHeight * renderer.getPixelRatio();
 
   // 相机始终看向玩家
-  controls.target.lerp(player.position, 1 - Math.exp(-8 * dt));
+  controls.target.lerp(player.position, smooth(JUICE.cameraFollowRate, dt));
 
   if (state.running) {
     ui.time.textContent = state.timeLeft.toFixed(1);
