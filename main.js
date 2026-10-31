@@ -1979,6 +1979,8 @@ function endRound() {
     comboLine,
     `Best ${state.best}`,
   ].filter(Boolean));
+  // 回到结算遮罩后，竖屏提示可以重新出现（函数声明会提升，这里调用没问题）
+  updateRotateHint();
 }
 
 // ---------------- 横屏适配 ----------------
@@ -1994,8 +1996,10 @@ function isPortrait() {
 
 function updateRotateHint() {
   if (!rotateHint) return;
-  // 只在触屏设备 + 竖屏时提示；桌面上窗口变窄不该弹这个
-  const show = isTouch && isPortrait();
+  // 只在"还没开始游戏"时提示：
+  // 开局后再弹出会遮挡画面、干扰操作，而且玩家已经看到游戏了，提示也没必要。
+  // 想重新看提示就等这一局结束（回到结算遮罩时 running=false）。
+  const show = isTouch && isPortrait() && !state.running;
   rotateHint.style.display = show ? 'flex' : 'none';
 }
 
@@ -2028,6 +2032,9 @@ ui.overlay.addEventListener('click', () => {
   // 先尝试横屏（必须在这个用户手势的调用栈里）
   tryLockLandscape();
   if (!state.running) startRound();
+  // 开局后立刻收起"转横屏"提示（之后只有 resize/orientationchange 才会重新判断，
+  // 而那时 state.running 为 true，不会再显示）
+  updateRotateHint();
 });
 // 触屏设备上，摇杆第一次按下也补一次尝试（万一玩家跳过了开始遮罩）
 if (joystickEl) {
