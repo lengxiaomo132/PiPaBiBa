@@ -49,6 +49,13 @@ export class OrbitControls {
     this._activePointers = new Set();
     this._pointerId = null;
 
+    // 单指按下后的"观察期"（毫秒）：这期间先不旋转，等着看会不会有第二根手指。
+    // 双指手势两指几乎同时落下，80ms 足够识别；单指拖动则只延迟一帧左右，感觉不到。
+    this.multiTouchDelay = 80;
+    this._awaitMultiTouch = false;
+    this._pendingPointerId = null;
+    this._pendingSince = 0;
+
     // 鼠标位置
     this._pointerStart = new THREE.Vector2();
 
@@ -86,26 +93,56 @@ export class OrbitControls {
     if (!this.enabled) return;
     if (event.button !== 0 && event.pointerType === 'mouse') return; // 只响应左键（触摸没有 button）
 
-    // 多指（捏合缩放）不能当成拖动。
-    // 触摸时每根手指都会独立触发 pointerdown，若不拦住，双指缩放会同时转动视角。
-    // 用 activePointers 记录当前按下的手指，数量 > 1 就直接不进入 ROTATE 状态。
     this._activePointers.add(event.pointerId);
+
     if (this._activePointers.size > 1) {
-      // 多指：退出拖动，并且清掉 _pointerId，
-      // 否则之后抬指时 event.pointerId 对不上，_state 永远停在 ROTATE 的残留状态。
+      // 多指（捏合缩放）：退出拖动并清掉指针记录。
+      //
+      // 关键：仅靠这里拦截是不够的。真实手机上第二根手指按下之前，
+      // 第一根手指已经移动过若干次，视角早就被转走了一段。
+      // 所以下面 _onPointerMove 里还有一个"等待期"（见 _awaitMultiTouch）。
       this._state = STATE.NONE;
       this._pointerId = null;
+      this._awaitMultiTouch = false;
       return;
     }
 
-    this._state = STATE.ROTATE;
-    this._pointerId = event.pointerId;   // 记住是哪根手指在拖
+    // 单指按下：先不立刻进入 ROTATE，而是记下时间并等待一小段时间。
+    // 若这期间第二根手指也按下了，就当捏合处理，完全不转视角。
+    // 若是真单指，第一帧移动后即可正常拖动（用户感知不到延迟）。
+    this._pendingPointerId = event.pointerId;
+    this._pendingSince = performance.now();
     this._pointerStart.set(event.clientX, event.clientY);
     this._syncFromCamera();
+    this._state = STATE.NONE;
+    this._awaitMultiTouch = event.pointerType !== 'mouse';
+    if (!this._awaitMultiTouch) {
+      // 鼠标没有多指场景，直接开始拖动
+      this._state = STATE.ROTATE;
+      this._pointerId = event.pointerId;
+    }
   }
 
   _onPointerMove(event) {
-    if (!this.enabled || this._state !== STATE.ROTATE) return;
+    if (!this.enabled) return;
+
+    // 等待期：触摸单指按下后的很短时间内，先不旋转。
+    // 真实的双指手势两指几乎同时落下（通常 < 80ms），这段等待足以吃掉
+    // "第一根手指先动了一下"造成的那一点点视角跳动。
+    if (this._awaitMultiTouch && this._state !== STATE.ROTATE) {
+      if (event.pointerId !== this._pendingPointerId) return;
+      const elapsed = performance.now() - this._pendingSince;
+      if (elapsed < this.multiTouchDelay) return;   // 还在等待，不转
+      // 等够了仍只有一根手指：确认是单指拖动，正式进入 ROTATE。
+      // 注意不要把这一帧的位移丢掉——否则第一次拖动的手感会"顿一下"。
+      this._state = STATE.ROTATE;
+      this._pointerId = this._pendingPointerId;
+      this._pointerStart.set(event.clientX, event.clientY);
+      // 继续往下走，用当前帧的位置差正常计算旋转
+    } else if (this._state !== STATE.ROTATE) {
+      return;
+    }
+
     // 只处理发起拖动的那根手指；第二根手指的移动一律忽略
     if (event.pointerId !== this._pointerId) return;
 
@@ -126,18 +163,20 @@ export class OrbitControls {
   _onPointerUp(event) {
     if (event && event.pointerId !== undefined) {
       this._activePointers.delete(event.pointerId);
+      if (event.pointerId === this._pendingPointerId) this._pendingPointerId = null;
       // 只有抬起"发起拖动的那根手指"才结束旋转。
-      // 之前这里还无条件把 _state 清零，导致多指场景结束后
-      // 下一次单指/鼠标按下无法开始拖动（测试里鼠标失效就是这个原因）。
       if (event.pointerId === this._pointerId) {
         this._pointerId = null;
         this._state = STATE.NONE;
       }
+      if (this._activePointers.size === 0) this._awaitMultiTouch = false;
       return;
     }
     this._activePointers.clear();
+    this._pendingPointerId = null;
     this._pointerId = null;
     this._state = STATE.NONE;
+    this._awaitMultiTouch = false;
   }
 
   _onWheel(event) {
