@@ -432,8 +432,7 @@ const SLIME = {
   rippleWaves: 3,         // 沿高度方向的波数
   rippleDecay: 4.5,       // 波动衰减速率（1/s）
 
-  // ---- A3：波浪传播（底部先动，再往上传）----
-  // 注意：延迟太大会让不同高度层的半径差很多，看起来像"盘状折痕"。
+  // ---- A3：波浪传播（底部先动，再往上传）----  // 注意：延迟太大会让不同高度层的半径差很多，看起来像"盘状折痕"。
   // 0.55s 太猛，收到 0.18s；同时 waveGain 控制"延迟值参与多少"，留一点实时响应。
   waveLagPerHeight: 0.18, // 顶部相对底部的延迟（秒），h 越高越晚
   waveGain: 0.45,         // 延迟值占比重（0 = 完全实时，1 = 完全延迟）
@@ -458,6 +457,20 @@ const SLIME = {
   eyeOffsetY: 0.06,
   eyeColor: 0xd9dde2,  // 浅灰：半透明身体里不会像黑贴片
 };
+
+// ---------------- 触屏设备的形变加强 ----------------
+// 手机屏幕小、相机离得远，同样的世界单位幅度投影到屏幕上只有桌面的一半左右，
+// 所以"抖动"在小屏上几乎看不出来。这里按设备放大形变幅度，物理/碰撞一律不动。
+//
+// 只放大看得见的两个量：
+//   wobbleAmount   横向晃动（X/Z 独立）—— 这是"果冻感"最明显的来源
+//   rippleAmplitude 表面颤动 —— 刻意压得比 wobble 保守，
+//                                  0.35 时曾出现明显褶皱，手机上再放大也留足余量
+const deviceIsTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+if (deviceIsTouch) {
+  SLIME.wobbleAmount *= 1.7;     // 0.10 -> 0.17
+  SLIME.rippleAmplitude *= 1.25; // 0.10 -> 0.125
+}
 
 // 玩家：一只会弹的史莱姆
 // 结构：player(Group，只管位置/朝向) → slimeBody(顶点形变) → [内核, 眼睛]
@@ -1452,8 +1465,9 @@ const joystick = {
 // 触屏移动方向（屏幕空间），null = 没在摇杆上
 let touchMove = null;
 
-// 是否触屏设备（用于显示虚拟控件）
-const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+// 是否触屏设备（用于显示虚拟控件）。复用上面早期探测的 deviceIsTouch，
+// 避免同一个判断写两遍、两处结果不一致。
+const isTouch = deviceIsTouch;
 
 const canvasEl = renderer.domElement;
 
