@@ -44,6 +44,11 @@ export class OrbitControls {
     this._scale = 1;
     this._state = STATE.NONE;
 
+    // 指针追踪：区分单指拖动与多指捏合。
+    // 触摸设备上每根手指都有独立的 pointerId，必须记录集合才能判断当前是几指操作。
+    this._activePointers = new Set();
+    this._pointerId = null;
+
     // 鼠标位置
     this._pointerStart = new THREE.Vector2();
 
@@ -80,13 +85,29 @@ export class OrbitControls {
   _onPointerDown(event) {
     if (!this.enabled) return;
     if (event.button !== 0 && event.pointerType === 'mouse') return; // 只响应左键（触摸没有 button）
+
+    // 多指（捏合缩放）不能当成拖动。
+    // 触摸时每根手指都会独立触发 pointerdown，若不拦住，双指缩放会同时转动视角。
+    // 用 activePointers 记录当前按下的手指，数量 > 1 就直接不进入 ROTATE 状态。
+    this._activePointers.add(event.pointerId);
+    if (this._activePointers.size > 1) {
+      // 多指：退出拖动，并且清掉 _pointerId，
+      // 否则之后抬指时 event.pointerId 对不上，_state 永远停在 ROTATE 的残留状态。
+      this._state = STATE.NONE;
+      this._pointerId = null;
+      return;
+    }
+
     this._state = STATE.ROTATE;
+    this._pointerId = event.pointerId;   // 记住是哪根手指在拖
     this._pointerStart.set(event.clientX, event.clientY);
     this._syncFromCamera();
   }
 
   _onPointerMove(event) {
     if (!this.enabled || this._state !== STATE.ROTATE) return;
+    // 只处理发起拖动的那根手指；第二根手指的移动一律忽略
+    if (event.pointerId !== this._pointerId) return;
 
     const dx = event.clientX - this._pointerStart.x;
     const dy = event.clientY - this._pointerStart.y;
@@ -102,7 +123,20 @@ export class OrbitControls {
     this._sphericalDelta.phi -= (2 * Math.PI * dy / h) * this.rotateSpeed;
   }
 
-  _onPointerUp() {
+  _onPointerUp(event) {
+    if (event && event.pointerId !== undefined) {
+      this._activePointers.delete(event.pointerId);
+      // 只有抬起"发起拖动的那根手指"才结束旋转。
+      // 之前这里还无条件把 _state 清零，导致多指场景结束后
+      // 下一次单指/鼠标按下无法开始拖动（测试里鼠标失效就是这个原因）。
+      if (event.pointerId === this._pointerId) {
+        this._pointerId = null;
+        this._state = STATE.NONE;
+      }
+      return;
+    }
+    this._activePointers.clear();
+    this._pointerId = null;
     this._state = STATE.NONE;
   }
 
