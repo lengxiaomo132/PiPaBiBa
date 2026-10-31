@@ -14,6 +14,7 @@ html, body {
 
 canvas { display: block; }
 
+/* ---------- HUD ---------- */
 #hud {
   position: fixed;
   top: 16px;
@@ -51,6 +52,7 @@ canvas { display: block; }
   pointer-events: none;
 }
 
+/* ---------- 开始 / 结束遮罩 ---------- */
 #overlay {
   position: fixed;
   inset: 0;
@@ -80,10 +82,11 @@ canvas { display: block; }
 #overlay p { font-size: 16px; opacity: 0.8; }
 #overlay p.small { font-size: 14px; opacity: 0.5; margin-top: 8px; }
 
+/* ---------- 加载提示 ---------- */
 #loading {
   position: fixed;
   inset: 0;
-  z-index: 10;
+  z-index: 10; /* 盖住 HUD / overlay，加载完才撤销 */
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -110,7 +113,7 @@ canvas { display: block; }
 }
 
 #loading.error {
-  overflow: auto;
+  overflow: auto; /* 小窗口下提示文字较多时允许滚动 */
 }
 
 #loading.error h1 {
@@ -136,10 +139,12 @@ canvas { display: block; }
 #loading.hidden {
   opacity: 0;
   pointer-events: none;
-  visibility: hidden;
+  visibility: hidden; /* 加载完后彻底移出可见区，避免挡住 overlay 的点击 */
   transition: opacity 0.3s ease, visibility 0s linear 0.3s;
 }
 
+/* ---------- 触屏虚拟控件 ---------- */
+/* 默认隐藏：只有检测到触屏设备时 body 才有 .is-touch */
 #joystick,
 #btn-jump {
   display: none;
@@ -157,8 +162,9 @@ body.is-touch #joystick {
   border-radius: 50%;
   border: 2px solid rgba(140, 220, 255, 0.5);
   background: rgba(80, 160, 220, 0.15);
-  opacity: 0;
-  pointer-events: none;
+  opacity: 0.32;
+  pointer-events: auto;   /* 必须可点击：它要吃掉 pointer 事件，不让 canvas 收到 */
+  touch-action: none;
   transition: opacity 0.12s ease;
   z-index: 10;
 }
@@ -205,13 +211,52 @@ body.is-touch #btn-jump.pressed {
   transform: scale(0.92);
 }
 
+/* 触屏设备上隐藏键盘提示（手机上没意义） */
 body.is-touch #hint {
   display: none;
 }
 
+/* 触屏设备 HUD 稍微缩小，给画面留空间 */
 @media (max-width: 720px) {
   #hud {
     font-size: 17px;
     padding: 8px 12px;
   }
 }
+
+/* ---------- 竖屏提示 ---------- */
+/* 半透明、不拦截点击：玩家仍然能看到并操作游戏，只是提醒他转过来 */
+#rotate-hint {
+  display: none;
+  position: fixed;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 14px;
+  background: rgba(8, 14, 20, 0.42);
+  z-index: 20;
+  pointer-events: none;
+  padding: 24px;
+  text-align: center;
+}
+
+#rotate-hint .rotate-icon {
+  font-size: 54px;
+  line-height: 1;
+  opacity: 0.9;
+  animation: rotate-wobble 1.8s ease-in-out infinite;
+}
+
+#rotate-hint .rotate-text {
+  font-size: 17px;
+  letter-spacing: 1px;
+  color: #d7ecff;
+  opacity: 0.92;
+}
+
+@keyframes rotate-wobble {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-90deg); }
+}
+
